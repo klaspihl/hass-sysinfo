@@ -1,0 +1,5 @@
+/data/*
+/log/*
+docker-compose.mqtt-nodered.yml
+flows.json
+mosquitto.conf

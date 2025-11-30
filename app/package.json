@@ -1,0 +1,12 @@
+{
+  "name": "sys-stat-app",
+  "version": "1.0.0",
+  "main": "collect.js",
+  "type": "module",
+  "scripts": {
+    "start": "node collect.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.3.6"
+  }
+}

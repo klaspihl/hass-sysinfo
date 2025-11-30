@@ -1,0 +1,22 @@
+{
+  "common": {
+    "cpuinfo": "/proc/cpuinfo",
+    "systemDisk": "df /etc/hosts",
+    "dataDisk": "du -d0 {disk}",
+    "dataDiskDf": "df {disk}",
+    "files": "find {disk} -type f | wc -l",
+    "newestFile": "find {disk} -type f -printf '%T@ %p\n' | sort -nr | head -n1",
+    "memory": "free",
+    "uptime": "awk '{print int($1)}' /proc/uptime",
+    "load": "cat /proc/loadavg"
+  },
+  "raspberrypi": {
+    "deviceModel": "/sys/firmware/devicetree/base/model",
+    "deviceSerial": "/sys/firmware/devicetree/base/serial-number"
+  },
+  "x86": {
+    "deviceModel": "/sys/devices/virtual/dmi/id/product_name",
+    "deviceSerial": "/sys/devices/virtual/dmi/id/product_serial",
+    "battery": "cat /sys/class/power_supply/BAT0/capacity"
+  }
+}

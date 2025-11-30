@@ -1,0 +1,20 @@
+services:
+  hass-sysinfo:
+    image: hass-sysinfo:latest
+    container_name: hass-sysinfo
+    environment:
+      - MQTT_HOST=mqtt-broker
+      - MQTT_PORT=1883
+      #- HOSTNAME=${HOSTNAME}
+      #- MODEL=${MODEL}
+      - MANUFACTURER=ASUS
+      #- SERIAL=${SERIAL}
+      - SUGGESTED_AREA=Office
+      # Set DEBUG=true to enable debug logging to console
+      - DEBUG=false
+    volumes:
+      # Only mount host data and config needed for stats collection
+      - /media/klas/temp1/:/host/backup:ro
+      - /etc/hostname:/host/etc/hostname:ro
+    working_dir: /usr/src/app
+    restart: unless-stopped
