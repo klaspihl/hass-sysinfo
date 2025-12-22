@@ -1,6 +1,6 @@
 services:
   hass-sysinfo:
-    image: hass-sysinfo:latest
+    image: klaspihl/hass-sysinfo:latest
     container_name: hass-sysinfo
     environment:
       - MQTT_HOST=mqtt-broker
