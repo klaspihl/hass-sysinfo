@@ -47,9 +47,12 @@ client.on('connect', async () => {
   });
   // Dynamically create sensors for each data disk, only if any data disks are found
   const data = await collect();
-  const datadisks = data.datadisks || {};
-  const dataDiskNames = Object.keys(datadisks);
-  if (data.datadisks.length > 0) {
+  debug('Collected initial data for MQTT autodiscovery: ' + JSON.stringify(data));
+  if (data.datadisks && Object.keys(data.datadisks).length > 0) {
+    const datadisks = data.datadisks;
+    debug('Data disks found: ' + Object.keys(datadisks).join(', '));
+    const dataDiskNames = Object.keys(datadisks);
+    debug('Length of data disks: ' + dataDiskNames.length);
     dataDiskNames.forEach(disk => {
       const prefix = `datadisk_${disk}`;
       const diskName = disk;
@@ -130,7 +133,7 @@ setInterval(async () => {
     try {
       const data = await collect();
       client.publish(`homeassistant/sensor/${HOSTNAME}/state`, JSON.stringify(data));
-  debug('Published system data');
+  debug('Published system data topic homeassistant/sensor/${HOSTNAME}/state: ' + JSON.stringify(data));
     } catch (e) {
       debug('Error collecting or publishing data: ' + e);
     }
