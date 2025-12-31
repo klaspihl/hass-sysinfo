@@ -133,7 +133,7 @@ setInterval(async () => {
     try {
       const data = await collect();
       client.publish(`homeassistant/sensor/${HOSTNAME}/state`, JSON.stringify(data));
-  debug('Published system data topic homeassistant/sensor/${HOSTNAME}/state: ' + JSON.stringify(data));
+  debug(`Published system data topic homeassistant/sensor/${HOSTNAME}/state: ` + JSON.stringify(data));
     } catch (e) {
       debug('Error collecting or publishing data: ' + e);
     }
