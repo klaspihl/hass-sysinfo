@@ -73,7 +73,7 @@ client.on('connect', async () => {
           ...(sensor.icon ? { icon: sensor.icon } : {})
         };
         client.publish(`homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`, JSON.stringify(config), {retain: true});
-        debug(`Sent MQTT autodiscovery for ${sensor.name}`);
+        debug(`Sent MQTT autodiscovery for ${sensor.name} topic homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`);
       });
     });
   }
@@ -119,7 +119,7 @@ client.on('connect', async () => {
       ...(sensor.icon ? { icon: sensor.icon } : {})
     };
     client.publish(`homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`, JSON.stringify(config), {retain: true});
-  debug(`Sent MQTT autodiscovery for ${sensor.name}`);
+  debug(`Sent MQTT autodiscovery for ${sensor.name} topic homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`);
   });
 
   // Start periodic data collection
