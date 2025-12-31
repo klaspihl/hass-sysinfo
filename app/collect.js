@@ -248,7 +248,6 @@ async function collect() {
   debug('Memory parsed: ' + JSON.stringify(memory));
 
   const exportData = {
-    datadisks,
     uptime: uptimeSeconds,
     load1,
     load5,
@@ -258,6 +257,10 @@ async function collect() {
     memory,
     ...(battery !== null ? { battery } : {})
   };
+  // Only add datadisks if any are found
+  if (Object.keys(datadisks).length > 0) {
+    exportData.datadisks = datadisks;
+  }
   debug('Export JSON: ' + JSON.stringify(exportData, null, 2));
   return exportData;
 }
