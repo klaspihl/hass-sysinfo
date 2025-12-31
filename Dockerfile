@@ -1,11 +1,11 @@
-FROM node:latest
+FROM node:alpine
 
 WORKDIR /usr/src/app
-
-COPY app/package.json ./package.json
-RUN apt-get update && apt-get install -y lm-sensors && rm -rf /var/lib/apt/lists/*
-RUN npm install --omit=dev
-
+COPY app/package.json ./
 COPY app ./app
+# Install lm-sensors using apk (Alpine package manager)
+RUN apk add --no-cache lm_sensors \
+  && npm install --omit=dev \
+  && npm cache clean --force
 
 CMD ["node", "app/index.js"]
