@@ -49,7 +49,7 @@ client.on('connect', async () => {
   const data = await collect();
   const datadisks = data.datadisks || {};
   const dataDiskNames = Object.keys(datadisks);
-  if (dataDiskNames.length > 0) {
+  if (data.datadisks.length > 0) {
     dataDiskNames.forEach(disk => {
       const prefix = `datadisk_${disk}`;
       const diskName = disk;
