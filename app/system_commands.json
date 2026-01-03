@@ -5,7 +5,7 @@
     "dataDisk": "du -d0 {disk}",
     "dataDiskDf": "df {disk}",
     "files": "find {disk} -type f | wc -l",
-    "newestFile": "find {disk} -type f -printf '%T@ %p\n' | sort -nr | head -n1",
+    "newestFile": "find {disk} -type f -exec stat -c '%Y %n' {} + | sort -nr | head -n1",
     "memory": "free",
     "uptime": "awk '{print int($1)}' /proc/uptime",
     "load": "cat /proc/loadavg"
