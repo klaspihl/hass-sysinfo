@@ -114,12 +114,24 @@ async function collect() {
   const diskRaw = await execP(commands.systemDisk);
   debug('Disk / raw:\n' + diskRaw);
   let diskLines = diskRaw.trim().split('\n');
-  let diskRoot = diskLines.find(l => l.includes('/dev/')) || '';
-  let diskParts = diskRoot.split(/\s+/);
+  // Find the index of the line with /dev/
+  let devIdx = diskLines.findIndex(l => l.startsWith('/dev/'));
+  let diskDataLine = '';
+  if (devIdx !== -1) {
+    // If the next line exists and starts with spaces and a digit, join them
+    if (diskLines[devIdx + 1] && /^\s*\d/.test(diskLines[devIdx + 1])) {
+      diskDataLine = (diskLines[devIdx] + ' ' + diskLines[devIdx + 1]).replace(/\s+/g, ' ').trim();
+    } else {
+      diskDataLine = diskLines[devIdx].replace(/\s+/g, ' ').trim();
+    }
+  }
+  let diskParts = diskDataLine.split(' ');
+  // Find the first part that is a number (skip device name)
+  let firstNumIdx = diskParts.findIndex(p => /^\d+$/.test(p));
   const systemdisk = {
-    total: Math.round((parseInt(diskParts[1], 10) * 1024 || 0) / (1024 * 1024 * 1024)),
-    used: Math.round((parseInt(diskParts[2], 10) * 1024 || 0) / (1024 * 1024 * 1024)),
-    usePercent: parseInt((diskParts[4] || '').replace('%',''), 10) || 0
+    total: Math.round((parseInt(diskParts[firstNumIdx], 10) * 1024 || 0) / (1024 * 1024 * 1024)),
+    used: Math.round((parseInt(diskParts[firstNumIdx + 1], 10) * 1024 || 0) / (1024 * 1024 * 1024)),
+    usePercent: parseInt((diskParts[firstNumIdx + 3] || '').replace('%',''), 10) || 0
   };
   debug('System disk: ' + JSON.stringify(systemdisk));
 
@@ -139,22 +151,34 @@ async function collect() {
     // Use SYSTEM_COMMANDS for commands, substitute {disk} with diskPath
     const diskCmd = (commands.dataDisk).replace('{disk}', diskPath);
     const diskRaw = await execP(diskCmd);
+    debug(`Data disk ${disk} raw:\n` + diskRaw);
     // du output: <blocks> <dirname>
     let used = 0;
     const duMatch = diskRaw.trim().match(/^(\d+)\s+/);
     if (duMatch) {
       used = Math.round((parseInt(duMatch[1], 10) * 1024 || 0) / (1024 * 1024 * 1024));
     }
-    // Get usePercent from df
+    // Get usePercent from df (handle multi-line output)
     let usePercent = null;
     if (commands.dataDiskDf) {
       const dfCmd = commands.dataDiskDf.replace('{disk}', diskPath);
       const dfRaw = await execP(dfCmd);
       let dfLines = dfRaw.trim().split('\n');
-      let dfDev = dfLines.find(l => l.includes('/dev/')) || '';
-      let dfParts = dfDev.split(/\s+/);
-      if (dfParts.length > 4) {
-        usePercent = parseInt((dfParts[4] || '').replace('%',''), 10) || 0;
+      // Find the index of the line with /dev/
+      let devIdx = dfLines.findIndex(l => l.startsWith('/dev/'));
+      let diskDataLine = '';
+      if (devIdx !== -1) {
+        if (dfLines[devIdx + 1] && /^\s*\d/.test(dfLines[devIdx + 1])) {
+          diskDataLine = (dfLines[devIdx] + ' ' + dfLines[devIdx + 1]).replace(/\s+/g, ' ').trim();
+        } else {
+          diskDataLine = dfLines[devIdx].replace(/\s+/g, ' ').trim();
+        }
+      }
+      let diskParts = diskDataLine.split(' ');
+      // Find the first part that is a number (skip device name)
+      let firstNumIdx = diskParts.findIndex(p => /^\d+$/.test(p));
+      if (firstNumIdx !== -1 && diskParts.length > firstNumIdx + 3) {
+        usePercent = parseInt((diskParts[firstNumIdx + 3] || '').replace('%',''), 10) || 0;
       }
     }
 
