@@ -115,11 +115,10 @@ async function collect() {
   debug('Disk / raw:\n' + diskRaw);
   let diskLines = diskRaw.trim().split('\n');
   let lastLine = diskLines[diskLines.length - 1].replace(/\s+/g, ' ').trim();
-  let diskParts = lastLine.split(' ');
+  let diskPartsAll = lastLine.split(' ');
+  let diskParts = diskPartsAll.slice(-5); // Always use last 5 parts: total, used, avail, percent, mountpoint
   debug('Disk / parts: ' + JSON.stringify(diskParts));
-  // Expect: Filesystem 1K-blocks Used Available Use% Mounted on
-  // Example: /dev/mapper/ubuntu--vg-ubuntu--lv 1918556552 1596311424 224714044 88% /host/backup
-  // diskParts: [dev, total, used, avail, percent, ...]
+  // diskParts: [total, used, avail, percent, mountpoint]
   const systemdisk = {
     total: diskParts[0] ? Math.round((parseInt(diskParts[0], 10) * 1024 || 0) / (1024 * 1024 * 1024)) : 0,
     used: diskParts[1] ? Math.round((parseInt(diskParts[1], 10) * 1024 || 0) / (1024 * 1024 * 1024)) : 0,
@@ -158,9 +157,10 @@ async function collect() {
       const dfRaw = await execP(dfCmd);
       let dfLines = dfRaw.trim().split('\n');
       let lastLine = dfLines[dfLines.length - 1].replace(/\s+/g, ' ').trim();
-      let diskParts = lastLine.split(' ');
+      let diskPartsAll = lastLine.split(' ');
+      let diskParts = diskPartsAll.slice(-5); // Always use last 5 parts
       debug(`Data disk ${disk} df parts: ` + JSON.stringify(diskParts));
-      // diskParts: [dev, total, used, avail, percent, ...]
+      // diskParts: [total, used, avail, percent, mountpoint]
       usePercent = diskParts[3] ? parseInt((diskParts[3] || '').replace('%',''), 10) || 0 : 0;
       debug(`Data disk ${disk} usePercent: ` + usePercent);
     }
