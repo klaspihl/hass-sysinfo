@@ -59,13 +59,13 @@ client.on('connect', async () => {
       const diskSensors = [
         { key: `${prefix}_used`, name: `Disk ${diskName} Used`, unit: 'GB', value_template: `{{ value_json.datadisks.${disk}.used }}`, device_class: 'data_size', icon: 'mdi:harddisk', suggested_display_precision: 0 },
         { key: `${prefix}_usePercent`, name: `Disk ${diskName} Use %`, unit: '%', value_template: `{{ value_json.datadisks.${disk}.usePercent }}`, device_class: 'power_factor', icon: 'mdi:harddisk', suggested_display_precision: 0 },
-        { key: `${prefix}_Files`, name: `Disk ${diskName} Files`,unit: "#", value_template: `{{ value_json.datadisks.${disk}.Files }}`, device_class: 'temperature', icon: 'mdi:harddisk', suggested_display_precision: 0 },
+        { key: `${prefix}_Files`, name: `Disk ${diskName} Files`, unit: "#", value_template: `{{ value_json.datadisks.${disk}.Files }}`, icon: 'mdi:harddisk', suggested_display_precision: 0 },
         { key: `${prefix}_AgeFile`, name: `Disk ${diskName} AgeFile`, unit: 's', value_template: `{{ value_json.datadisks.${disk}.AgeFile }}`, device_class: 'duration', icon: 'mdi:harddisk', suggested_display_precision: 0 },
       ];
       diskSensors.forEach(sensor => {
         const config = {
           device,
-          device_class: sensor.device_class,
+          ...(sensor.device_class ? { device_class: sensor.device_class } : {}),
           state_class: 'measurement',
           name: `${HOSTNAME} ${sensor.name}`,
           state_topic: `homeassistant/sensor/${HOSTNAME}/state`,
@@ -73,6 +73,7 @@ client.on('connect', async () => {
           unique_id: `${HOSTNAME}_${sensor.key}`,
           value_template: sensor.value_template,
           platform: 'mqtt',
+            serial_number: SERIAL || '',
           ...(sensor.icon ? { icon: sensor.icon } : {})
         };
         client.publish(`homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`, JSON.stringify(config), {retain: true});
