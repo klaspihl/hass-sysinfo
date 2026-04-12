@@ -1,5 +1,6 @@
 /data/*
 /log/*
+/errors/*
 docker-compose.mqtt-nodered.yml
 flows.json
 mosquitto.conf
