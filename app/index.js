@@ -3,7 +3,7 @@
 
 const DEBUG = process.env.DEBUG === 'true';
 import mqtt from 'mqtt';
-import { collect, getSystemType, getSerialAndModel, getHostName } from './collect.js';
+import { collect, collectDataDiskFileStats, getSystemType, getSerialAndModel, getHostName } from './collect.js';
 
 const MQTT_HOST = process.env.MQTT_HOST || 'localhost';
 const MQTT_PORT = process.env.MQTT_PORT || 1883;
@@ -15,6 +15,9 @@ const SYSTEM_TYPE = process.env.SYSTEM_TYPE || getSystemType();
 const SW_VERSION = '1.0';
 const MODEL = process.env.MODEL || getSerialAndModel(SYSTEM_TYPE).model;
 const SERIAL = process.env.SERIAL || getSerialAndModel(SYSTEM_TYPE).serial ;
+const pollFrequency = parseInt(process.env.pollFrequency, 10) || 60; // How often to update core data (in seconds)
+const pollFrequencyFiles = parseInt(process.env.pollFrequencyFiles, 10) || 3600; // How often to update file stats (in seconds)
+let latestFileStats = {};
 
 function debug(msg) {
   const time = new Date().toISOString();
@@ -46,7 +49,8 @@ client.on('connect', async () => {
     if (device[k] === undefined || device[k] === '') delete device[k];
   });
   // Dynamically create sensors for each data disk, only if any data disks are found
-  const data = await collect();
+  latestFileStats = await collectDataDiskFileStats();
+  const data = await collect({ fileStats: latestFileStats });
   debug('Collected initial data for MQTT autodiscovery: ' + JSON.stringify(data));
   if (data.datadisks && Object.keys(data.datadisks).length > 0) {
     const datadisks = data.datadisks;
@@ -128,17 +132,24 @@ client.on('connect', async () => {
 
   // Start periodic data collection
 
-const pollFrequency = parseInt(process.env.pollFrequency, 10) || 60;
-
 setInterval(async () => {
     try {
-      const data = await collect();
+      const data = await collect({ fileStats: latestFileStats });
       client.publish(`homeassistant/sensor/${HOSTNAME}/state`, JSON.stringify(data));
   debug(`Published system data topic homeassistant/sensor/${HOSTNAME}/state: ` + JSON.stringify(data));
     } catch (e) {
       debug('Error collecting or publishing data: ' + e);
     }
   }, pollFrequency * 1000);
+
+setInterval(async () => {
+    try {
+      latestFileStats = await collectDataDiskFileStats();
+      debug(`Updated file stats cache using pollFrequencyFiles (${pollFrequencyFiles}s)`);
+    } catch (e) {
+      debug('Error updating file stats cache: ' + e);
+    }
+  }, pollFrequencyFiles * 1000);
 
 });
 

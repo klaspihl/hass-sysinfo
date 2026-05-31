@@ -86,7 +86,39 @@ function getSerialAndModel(systemType) {
   }
   return { model: devicemodel, serial: deviceserial };
 }
-async function collect() {
+
+async function collectDataDiskFileStats() {
+  const execP = (cmd, opts) => new Promise((resolve) => exec(cmd, opts || {}, (e, out) => resolve(e ? '' : out)));
+  const SYSTEM_COMMANDS = JSON.parse(fs.readFileSync(path.join(__dirname, 'system_commands.json'), 'utf8'));
+  const commands = SYSTEM_COMMANDS['common'];
+
+  let dataDisks = findDataFolders();
+  dataDisks = dataDisks.map(p => path.basename(p));
+
+  const fileStats = {};
+  for (const disk of dataDisks) {
+    const diskPath = `/host/${disk}`;
+
+    const filesCmd = (commands.files).replace('{disk}', diskPath);
+    const filesRaw = await execP(filesCmd);
+    const Files = parseInt(filesRaw.trim(), 10) || 0;
+
+    const newestCmd = (commands.newestFile).replace('{disk}', diskPath);
+    const newestRaw = await execP(newestCmd);
+    let AgeFile = null;
+    if (newestRaw) {
+      const ts = parseFloat(newestRaw.split(' ')[0]);
+      if (!isNaN(ts)) AgeFile = Math.round(Date.now()/1000 - ts);
+    }
+
+    fileStats[disk] = { Files, AgeFile };
+  }
+
+  return fileStats;
+}
+
+async function collect(options = {}) {
+  const { fileStats = null } = options;
   const execP = (cmd, opts) => new Promise((resolve) => exec(cmd, opts || {}, (e, out) => resolve(e ? '' : out)));
 
   const systemType = getSystemType();
@@ -165,25 +197,14 @@ async function collect() {
       debug(`Data disk ${disk} usePercent: ` + usePercent);
     }
 
-    // Number of files
-    const filesCmd = (commands.files).replace('{disk}', diskPath);
-    const filesRaw = await execP(filesCmd);
-    const Files = parseInt(filesRaw.trim(), 10) || 0;
-
-    // Newest file age (seconds)
-    const newestCmd = (commands.newestFile).replace('{disk}', diskPath);
-    const newestRaw = await execP(newestCmd);
-    let AgeFile = null;
-    if (newestRaw) {
-      const ts = parseFloat(newestRaw.split(' ')[0]);
-      if (!isNaN(ts)) AgeFile = Math.round(Date.now()/1000 - ts);
-    }
+    const Files = fileStats && fileStats[disk] ? fileStats[disk].Files : null;
+    const AgeFile = fileStats && fileStats[disk] ? fileStats[disk].AgeFile : null;
 
     datadisks[disk] = {
       used,
       usePercent,
-      Files,
-      AgeFile
+      ...(Files !== null ? { Files } : {}),
+      ...(AgeFile !== null ? { AgeFile } : {})
     };
   }
 
@@ -272,5 +293,5 @@ async function collect() {
   return exportData;
 }
 
-export { collect };
+export { collect, collectDataDiskFileStats };
 
