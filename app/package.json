@@ -1,10 +1,10 @@
 {
-  "name": "sys-stat-app",
+  "name": "hass-sysinfo-appprom",
   "version": "1.0.0",
-  "main": "collect.js",
   "type": "module",
+  "main": "index.js",
   "scripts": {
-    "start": "node collect.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "mqtt": "^5.3.6"
