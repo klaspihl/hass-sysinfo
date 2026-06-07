@@ -1,158 +1,210 @@
+import mqtt from 'mqtt';
+import os from 'os';
+import fs from 'fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-
+const execFileAsync = promisify(execFile);
 
 const DEBUG = process.env.DEBUG === 'true';
-import mqtt from 'mqtt';
-import { collect, collectDataDiskFileStats, getSystemType, getSerialAndModel, getHostName } from './collect.js';
 
 const MQTT_HOST = process.env.MQTT_HOST || 'localhost';
-const MQTT_PORT = process.env.MQTT_PORT || 1883;
+const MQTT_PORT = parseInt(process.env.MQTT_PORT || '1883', 10);
 const MQTT_URL = `mqtt://${MQTT_HOST}:${MQTT_PORT}`;
+const HA_DISCOVERY_BASE = process.env.HA_DISCOVERY_BASE || 'homeassistant/sensor';
 
-// Centralized host info
-const HOSTNAME = process.env.HOSTNAME || getHostName();
-const SYSTEM_TYPE = process.env.SYSTEM_TYPE || getSystemType();
-const SW_VERSION = '1.0';
-const MODEL = process.env.MODEL || getSerialAndModel(SYSTEM_TYPE).model;
-const SERIAL = process.env.SERIAL || getSerialAndModel(SYSTEM_TYPE).serial ;
-const pollFrequency = parseInt(process.env.pollFrequency, 10) || 60; // How often to update core data (in seconds)
-const pollFrequencyFiles = parseInt(process.env.pollFrequencyFiles, 10) || 3600; // How often to update file stats (in seconds)
-let latestFileStats = {};
+function resolveHostName() {
+  const envHostName = (process.env.HOSTNAME || '').trim();
+  if (envHostName !== '') {
+    return envHostName;
+  }
 
-function debug(msg) {
-  const time = new Date().toISOString();
-  if (DEBUG) {
-    console.log(`[DEBUG ${time}] ${msg}`);
+  try {
+    const hostFsHostName = fs.readFileSync('/host/etc/hostname', 'utf8').trim();
+    if (hostFsHostName !== '') {
+      return hostFsHostName;
+    }
+  } catch {
+    // Fall back to container hostname when host file is unavailable.
   }
-  if (client && client.connected) {
-    client.publish('/debug/', `[${time}] ${msg}`);
-  }
+
+  return os.hostname();
 }
 
-const client = mqtt.connect(MQTT_URL);
+const HOSTNAME = resolveHostName();
+const POLL_FREQUENCY_SECONDS = parseInt(process.env.POLL_FREQUENCY || '60', 10);
+const DEFAULT_CORE_EXPIRE_AFTER_SECONDS = POLL_FREQUENCY_SECONDS * 3;
+const DEFAULT_DISK_AGE_EXPIRE_AFTER_SECONDS = POLL_FREQUENCY_SECONDS * 10;
+const SENSOR_EXPIRE_SECONDS = parseInt(process.env.SENSOR_EXPIRE || String(DEFAULT_CORE_EXPIRE_AFTER_SECONDS), 10);
+const SENSOR_DISKAGE_EXPIRE_SECONDS = parseInt(process.env.SENSOR_DISKAGE_EXPIRE || String(DEFAULT_DISK_AGE_EXPIRE_AFTER_SECONDS), 10);
+const HA_OBJECT_PREFIX = process.env.HA_OBJECT_PREFIX || `${HOSTNAME}_appprom`;
+const MQTT_STATE_TOPIC = process.env.MQTT_STATE_TOPIC || `${HA_DISCOVERY_BASE}/${HA_OBJECT_PREFIX}/state`;
+const COLLECTOR_PATH = process.env.COLLECTOR_PATH || '/collector.sh';
 
-client.on('connect', async () => {
-  debug('Connected to MQTT broker');
-  // Send MQTT autodiscovery for each measurement
-  const device = {
-    identifiers:  HOSTNAME,
-    name: HOSTNAME,
-    manufacturer: process.env.MANUFACTURER || '20060620',
-    model: MODEL,
-    sw_version: SW_VERSION,
-    hw_version: process.env.HW_VERSION || '',
-    serial_number: SERIAL,
-    suggested_area: process.env.SUGGESTED_AREA || '',
-  };
-  // Remove undefined and empty string fields
-  Object.keys(device).forEach(k => {
-    if (device[k] === undefined || device[k] === '') delete device[k];
-  });
-  // Dynamically create sensors for each data disk, only if any data disks are found
-  latestFileStats = await collectDataDiskFileStats();
-  const data = await collect({ fileStats: latestFileStats });
-  debug('Collected initial data for MQTT autodiscovery: ' + JSON.stringify(data));
-  if (data.datadisks && Object.keys(data.datadisks).length > 0) {
-    const datadisks = data.datadisks;
-    debug('Data disks found: ' + Object.keys(datadisks).join(', '));
-    const dataDiskNames = Object.keys(datadisks);
-    debug('Length of data disks: ' + dataDiskNames.length);
-    dataDiskNames.forEach(disk => {
-      const prefix = `datadisk_${disk}`;
-      const diskName = disk;
-      const diskSensors = [
-        { key: `${prefix}_used`, name: `Disk ${diskName} Used`, unit: 'GB', value_template: `{{ value_json.datadisks.${disk}.used }}`, device_class: 'data_size', icon: 'mdi:harddisk', suggested_display_precision: 0 },
-        { key: `${prefix}_usePercent`, name: `Disk ${diskName} Use %`, unit: '%', value_template: `{{ value_json.datadisks.${disk}.usePercent }}`, device_class: 'power_factor', icon: 'mdi:harddisk', suggested_display_precision: 0 },
-        { key: `${prefix}_Files`, name: `Disk ${diskName} Files`, unit: "#", value_template: `{{ value_json.datadisks.${disk}.Files }}`, icon: 'mdi:harddisk', suggested_display_precision: 0 },
-        { key: `${prefix}_AgeFile`, name: `Disk ${diskName} AgeFile`, unit: 's', value_template: `{{ value_json.datadisks.${disk}.AgeFile }}`, device_class: 'duration', icon: 'mdi:harddisk', suggested_display_precision: 0 },
-      ];
-      diskSensors.forEach(sensor => {
-        const config = {
-          device,
-          ...(sensor.device_class ? { device_class: sensor.device_class } : {}),
-          state_class: 'measurement',
-          name: `${HOSTNAME} ${sensor.name}`,
-          state_topic: `homeassistant/sensor/${HOSTNAME}/state`,
-          unit_of_measurement: sensor.unit,
-          unique_id: `${HOSTNAME}_${sensor.key}`,
-          value_template: sensor.value_template,
-          platform: 'mqtt',
-            serial_number: SERIAL || '',
-          ...(sensor.icon ? { icon: sensor.icon } : {})
-        };
-        client.publish(`homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`, JSON.stringify(config), {retain: true});
-        debug(`Sent MQTT autodiscovery for ${sensor.name} topic homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`);
-      });
-    });
+function debug(message) {
+  if (!DEBUG) {
+    return;
+  }
+  const time = new Date().toISOString();
+  console.log(`[DEBUG ${time}] ${message}`);
+}
+
+async function collectMetrics() {
+  const env = { ...process.env };
+  const { stdout, stderr } = await execFileAsync('sh', [COLLECTOR_PATH], { env, maxBuffer: 1024 * 1024 * 4 });
+
+  if (stderr && stderr.trim().length > 0) {
+    debug(`collector stderr: ${stderr.trim()}`);
   }
 
-  // Other sensors (uptime, load, temp, systemdisk, memory, battery)
+  const raw = stdout.trim();
+  if (!raw) {
+    throw new Error('collector returned empty output');
+  }
+
+  return JSON.parse(raw);
+}
+
+function sensorDef(key, name, unit, valueTemplate, deviceClass = null, icon = null, expireAfter = null) {
+  return { key, name, unit, valueTemplate, deviceClass, icon, expireAfter };
+}
+
+function publishDiscovery(client, device, payload) {
+  const metrics = payload?.metrics || {};
+
   const sensors = [
-    { key: 'uptime', name: 'Uptime', unit: 's', value_template: '{{ value_json.uptime }}', device_class: 'duration', suggested_display_precision: 0, expire_after: 3600, icon: 'mdi:timer' },
-    { key: 'load1', name: 'Load 1m', unit: '', value_template: '{{ value_json.load1 }}', device_class: 'power_factor', icon: 'mdi:gauge' },
-    { key: 'load5', name: 'Load 5m', unit: '', value_template: '{{ value_json.load5 }}', device_class: 'power_factor', icon: 'mdi:gauge' },
-    { key: 'load15', name: 'Load 15m', unit: '', value_template: '{{ value_json.load15 }}', device_class: 'power_factor', icon: 'mdi:gauge' },
-    { key: 'temperature', name: 'Temperature', unit: '°C', value_template: '{{ value_json.temperature }}', device_class: 'temperature', icon: 'mdi:thermometer' },
-    { key: 'systemdisk_total', name: 'System Disk Total', unit: 'GB', value_template: '{{ value_json.systemdisk.total }}', device_class: 'data_size', icon: 'mdi:harddisk', suggested_display_precision: 0 },
-    { key: 'systemdisk_used', name: 'System Disk Used', unit: 'GB', value_template: '{{ value_json.systemdisk.used }}', device_class: 'data_size', icon: 'mdi:harddisk', suggested_display_precision: 0 },
-    { key: 'systemdisk_usePercent', name: 'System Disk Use %', unit: '%', value_template: '{{ value_json.systemdisk.usePercent }}', device_class: 'power_factor', icon: 'mdi:harddisk', suggested_display_precision: 0 },
-    { key: 'memory_total', name: 'Memory Total', unit: 'GB', value_template: '{{ value_json.memory.total }}', device_class: 'data_size',suggested_display_precision: 0, icon: 'mdi:memory' },
-    { key: 'memory_used', name: 'Memory Used', unit: 'GB', value_template: '{{ value_json.memory.used }}', device_class: 'data_size', suggested_display_precision: 0, icon: 'mdi:memory' },
-    { key: 'memory_usedPercent', name: 'Memory Used %', unit: '%', value_template: '{{ value_json.memory.usedPercent }}', device_class: 'power_factor', suggested_display_precision: 0, icon: 'mdi:memory' }
+    sensorDef('uptime', 'Uptime', 's', '{{ value_json.metrics.systemUptimeSeconds }}', 'duration', 'mdi:timer', SENSOR_EXPIRE_SECONDS),
+    sensorDef('load1', 'Load 1m', '', "{{ value_json.metrics.cpuLoad['1m'] }}", null, 'mdi:gauge', SENSOR_EXPIRE_SECONDS),
+    sensorDef('load5', 'Load 5m', '', "{{ value_json.metrics.cpuLoad['5m'] }}", null, 'mdi:gauge', SENSOR_EXPIRE_SECONDS),
+    sensorDef('load15', 'Load 15m', '', "{{ value_json.metrics.cpuLoad['15m'] }}", null, 'mdi:gauge', SENSOR_EXPIRE_SECONDS),
+    sensorDef('temperature', 'Temperature', '°C', '{{ value_json.metrics.systemTemperatureCelsius }}', 'temperature', 'mdi:thermometer'),
+    sensorDef('systemdisk_total', 'System Disk Total', 'B', '{{ value_json.metrics.DiskSizeBytesRoot }}', 'data_size', 'mdi:harddisk'),
+    sensorDef('systemdisk_used', 'System Disk Used', 'B', '{{ value_json.metrics.DiskUsageBytesRoot }}', 'data_size', 'mdi:harddisk'),
+    sensorDef('systemdisk_usePercent', 'System Disk Use %', '%', '{{ value_json.metrics.DiskUsagePercentRoot }}', null, 'mdi:harddisk'),
+    sensorDef('memory_total', 'Memory Total', 'B', '{{ value_json.metrics.memoryTotalBytes }}', 'data_size', 'mdi:memory'),
+    sensorDef('memory_usedPercent', 'Memory Used %', '%', '{{ value_json.metrics.memoryUsagePercent }}', null, 'mdi:memory'),
+    sensorDef('battery', 'Battery Level', '%', '{{ value_json.metrics.battery.capacityPercent }}', 'battery', 'mdi:battery', SENSOR_EXPIRE_SECONDS)
   ];
 
-  // Add battery sensor if present in data
-  if ('battery' in data) {
-    sensors.push({
-      key: 'battery',
-      name: 'Battery Level',
-      unit: '%',
-      value_template: '{{ value_json.battery }}',
-      device_class: 'battery',
-      icon: 'mdi:battery',
-      suggested_display_precision: 0
-    });
-  }
-  sensors.forEach(sensor => {
-    const config = {
-      device,
-      device_class: sensor.device_class,
-      state_class: 'measurement',
-      name: `${HOSTNAME} ${sensor.name}`,
-      state_topic: `homeassistant/sensor/${HOSTNAME}/state`,
-      unit_of_measurement: sensor.unit,
-      unique_id: `${HOSTNAME}_${sensor.key}`,
-      value_template: sensor.value_template,
-      platform: 'mqtt',
-      ...(sensor.icon ? { icon: sensor.icon } : {})
-    };
-    client.publish(`homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`, JSON.stringify(config), {retain: true});
-  debug(`Sent MQTT autodiscovery for ${sensor.name} topic homeassistant/sensor/${HOSTNAME}_${sensor.key}/config`);
+  // Add per-mount sensors dynamically from prom key suffixes.
+  const mountSuffixes = new Set();
+  Object.keys(metrics).forEach((k) => {
+    const match = k.match(/^DiskSizeBytes(.+)$/);
+    if (!match) {
+      return;
+    }
+    const suffix = match[1];
+    if (suffix !== 'Root') {
+      mountSuffixes.add(suffix);
+    }
   });
 
-  // Start periodic data collection
+  mountSuffixes.forEach((suffix) => {
+    const suffixLabel = suffix === 'Mount' ? 'root' : suffix;
+    const mountSensors = [
+      sensorDef(`disk_${suffix.toLowerCase()}_total`, `Disk ${suffixLabel} Total`, 'B', `{{ value_json.metrics.DiskSizeBytes${suffix} }}`, 'data_size', 'mdi:harddisk'),
+      sensorDef(`disk_${suffix.toLowerCase()}_used`, `Disk ${suffixLabel} Used`, 'B', `{{ value_json.metrics.DiskUsageBytes${suffix} }}`, 'data_size', 'mdi:harddisk'),
+      sensorDef(`disk_${suffix.toLowerCase()}_usePercent`, `Disk ${suffixLabel} Use %`, '%', `{{ value_json.metrics.DiskUsagePercent${suffix} }}`, null, 'mdi:harddisk')
+    ];
 
-setInterval(async () => {
-    try {
-      const data = await collect({ fileStats: latestFileStats });
-      client.publish(`homeassistant/sensor/${HOSTNAME}/state`, JSON.stringify(data));
-  debug(`Published system data topic homeassistant/sensor/${HOSTNAME}/state: ` + JSON.stringify(data));
-    } catch (e) {
-      debug('Error collecting or publishing data: ' + e);
+    if (Object.prototype.hasOwnProperty.call(metrics, `FileCount${suffix}`)) {
+      mountSensors.push(
+        sensorDef(`disk_${suffix.toLowerCase()}_Files`, `Disk ${suffixLabel} Files`, '', `{{ value_json.metrics.FileCount${suffix} }}`, null, 'mdi:file-document-multiple')
+      );
     }
-  }, pollFrequency * 1000);
 
-setInterval(async () => {
-    try {
-      latestFileStats = await collectDataDiskFileStats();
-      debug(`Updated file stats cache using pollFrequencyFiles (${pollFrequencyFiles}s)`);
-    } catch (e) {
-      debug('Error updating file stats cache: ' + e);
+    sensors.push(
+      ...mountSensors
+    );
+  });
+
+  // Add per-mount file age sensors when collector emits mountFileAgeSeconds<Suffix>.
+  const fileAgeSuffixes = new Set();
+  Object.keys(metrics).forEach((k) => {
+    const match = k.match(/^mountFileAgeSeconds(.+)$/);
+    if (!match) {
+      return;
     }
-  }, pollFrequencyFiles * 1000);
+    fileAgeSuffixes.add(match[1]);
+  });
 
-});
+  fileAgeSuffixes.forEach((suffix) => {
+    const suffixLabel = suffix === 'Mount' ? 'root' : suffix;
+    sensors.push(
+      sensorDef(`disk_${suffix.toLowerCase()}_AgeFile`, `Disk ${suffixLabel} AgeFile`, 's', `{{ value_json.metrics.mountFileAgeSeconds${suffix} }}`, 'duration', 'mdi:clock-outline', SENSOR_DISKAGE_EXPIRE_SECONDS)
+    );
+  });
 
-client.on('error', err => {
-  debug('MQTT error: ' + err);
+  sensors.forEach((sensor) => {
+    const config = {
+      platform: 'mqtt',
+      device,
+      state_class: 'measurement',
+      name: `${HOSTNAME} ${sensor.name}`,
+      state_topic: MQTT_STATE_TOPIC,
+      unit_of_measurement: sensor.unit,
+      unique_id: `${HA_OBJECT_PREFIX}_${sensor.key}`,
+      value_template: sensor.valueTemplate,
+      ...(sensor.expireAfter !== null ? { expire_after: sensor.expireAfter } : {}),
+      ...(sensor.deviceClass ? { device_class: sensor.deviceClass } : {}),
+      ...(sensor.icon ? { icon: sensor.icon } : {})
+    };
+
+    const configTopic = `${HA_DISCOVERY_BASE}/${HA_OBJECT_PREFIX}_${sensor.key}/config`;
+    client.publish(configTopic, JSON.stringify(config), { retain: true });
+    debug(`published discovery topic ${configTopic}`);
+  });
+}
+
+async function run() {
+  const client = mqtt.connect(MQTT_URL);
+
+  client.on('error', (err) => {
+    debug(`MQTT error: ${String(err)}`);
+  });
+
+  client.on('connect', async () => {
+    debug(`connected to MQTT at ${MQTT_URL}`);
+
+    const device = {
+      identifiers: HOSTNAME,
+      name: HOSTNAME,
+      manufacturer: process.env.MANUFACTURER || 'Pihl',
+      model: process.env.MODEL || 'Hass Sysinfo',
+      sw_version: process.env.SW_VERSION || '2.0.0',
+      serial_number: process.env.SERIAL || '',
+      suggested_area: process.env.SUGGESTED_AREA || ''
+    };
+
+    Object.keys(device).forEach((k) => {
+      if (device[k] === undefined || device[k] === '') {
+        delete device[k];
+      }
+    });
+
+    let discoveryPublished = false;
+
+    const publishState = async () => {
+      try {
+        const payload = await collectMetrics();
+        if (!discoveryPublished) {
+          publishDiscovery(client, device, payload);
+          discoveryPublished = true;
+        }
+        client.publish(MQTT_STATE_TOPIC, JSON.stringify(payload));
+        debug(`published state to ${MQTT_STATE_TOPIC}: ${JSON.stringify(payload)}`);
+      } catch (error) {
+        debug(`collect/publish failed: ${String(error)}`);
+      }
+    };
+
+    // Publish immediately on connect, then continue at poll interval.
+    publishState();
+    setInterval(publishState, POLL_FREQUENCY_SECONDS * 1000);
+  });
+}
+
+run().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });
